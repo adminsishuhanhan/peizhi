@@ -3,7 +3,7 @@
     "站名": "韩剧在线",
     "编码": "UTF-8",
     "请求头": "User-Agent$MOBILE_UA",
-    "主页url": "shturl.cc/WylMqrqYRS0",
+    "主页url": "https://www.fmria.com",
     "首页": "200",
     "起始页": "1",
     "分类url": "/search.php?page={catePg}&searchtype=5&order={by}&tid={cateId}&area=&year={year}&letter=&yuyan=&state=&money=&ver=&jq=;;mrcRA",
