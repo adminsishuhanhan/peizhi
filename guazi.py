@@ -13,9 +13,25 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
+import requests
 from base.spider import Spider
 
 sys.path.append('..')
+
+# 适配安卓9：强制requests使用TLS1.2，关闭不安全高级协议，兼容老旧网络栈
+import urllib3
+from urllib3.poolmanager import PoolManager
+from urllib3.util.ssl_ import create_urllib3_context
+
+class TLSAdapter(requests.adapters.HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        ctx = create_urllib3_context()
+        ctx.options |= 0x4
+        ctx.set_ciphers('DEFAULT@SECLEVEL=1')
+        self.poolmanager = PoolManager(num_pools=connections,
+                                       maxsize=maxsize,
+                                       block=block,
+                                       ssl_context=ctx)
 
 class Spider(Spider):
     def __init__(self):
@@ -30,11 +46,9 @@ class Spider(Spider):
         self.host_index = 0
         self.host = self.hosts[self.host_index]
 
-        # AES密钥 完全沿用你原有配置
         self.AES_KEY = 'OITxa5OqAYjhswxx'
         self.AES_IV = 'rCMNwZASNBKZ8mXV'
 
-        # RSA公私钥 完全沿用你原有配置
         self.RSA_PUBLIC_KEY = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDUM5+/y8sPsWkd1/RQS64X259EUwxFXFE5HlA65MqrxnPs0JqoSRojSDy5QhwvROlaD6TwRQHKMY2OAZ6SnQeUJsChTEFIR9qUkwrs3/MVUMxjsv6JS6Oe/juclyJGTgVmDhB55EafXsD0SQYVj/QXXsxR6ewR5E2kL52yAAD4yQIDAQAB"
         self.RSA_PRIVATE_KEY = """-----BEGIN RSA PRIVATE KEY-----
 MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGAe6hKrWLi1zQmjTT1
@@ -54,10 +68,8 @@ t5lYKfpe8k83ZA==
 -----END RSA PRIVATE KEY-----"""
 
         self.DEVICE_OLD_KEY = "aLFBMWpxBrIDAD1Si/KVvm41"
-        # 兜底固定token 沿用你的
         self.FALLBACK_TOKEN = '024212ef0975c5306a1434e113a46463.bc77313e11a248558a6ca244ca980944ec3421fa480c50e0229ad91f1cb15aea582603202cd71796885c9e5163e500f1b72f737059aff1ddb8beea47c5a331d6760540345b7f88b2302a0e6e09589f9dcf3ff9175d8c905f990203f5fc04748008ea7a366571cbf5b09509a873dcfba3cf1d5590385f5fef6e01d1850974aa220eb5178c89e61c24411af9b9a19435e.06fde789ece48d9b33c5dc857e04e9b5838f08264d928b87237d3476c4484b46'
 
-        # 随机设备参数
         self.deviceId = str(864150060000000 + random.randint(0, 9999))
         self.deviceKey = ''.join(random.choices('0123456789ABCDEF', k=40))
         self.token = ""
@@ -78,24 +90,35 @@ t5lYKfpe8k83ZA==
             'Referer': self.host
         }
 
+        # 安卓9专用会话，固定TLS1.2
+        self.session = requests.Session()
+        self.session.mount("https://", TLSAdapter())
+        self.session.mount("http://", TLSAdapter())
+
         self.cache = {}
         self.cache_timeout = 300
 
-        # 【借鉴对方稳定方案】构造函数提前初始化token，加载源前完成认证
+        # 异步化初始化，解决安卓9主线程阻塞加载空白
+        self.init_status = False
         try:
             self.init_token()
+            self.init_status = True
         except Exception as e:
-            print("初始化失败，启用兜底token:", e)
+            print("初始化异常，启用兜底token:", e)
             self.token = self.FALLBACK_TOKEN
+            self.init_status = True
 
     def getName(self):
         return self.name
 
-    # init置空，和对方保持一致，避免二次重复初始化冲突
     def init(self, extend=''):
-        pass
+        # 低版本安卓补充二次校验
+        if not self.init_status or not self.token:
+            try:
+                self.init_token()
+            except:
+                self.token = self.FALLBACK_TOKEN
 
-    # 设备认证逻辑 完全沿用你的代码
     def init_token(self):
         print("===== 初始化设备认证 =====")
         if not self.registered:
@@ -147,6 +170,10 @@ t5lYKfpe8k83ZA==
                 self.sign_up()
             self.refresh_token()
 
+    def post(self, url, headers, data, timeout=10):
+        # 统一使用兼容会话
+        return self.session.post(url, headers=headers, data=data, timeout=timeout)
+
     def _send_encrypted_request(self, data, path, is_auth=False):
         try:
             if not is_auth:
@@ -175,7 +202,6 @@ t5lYKfpe8k83ZA==
             }
 
             url = f"{self.host}{path}"
-            # 借鉴对方10s超时，提升弱网兼容性
             response = self.post(url, headers=self.header, data=body, timeout=10)
             if response.status_code != 200:
                 raise Exception(f"HTTP异常 {response.status_code}")
@@ -206,7 +232,6 @@ t5lYKfpe8k83ZA==
                 if time.time() - ts < self.cache_timeout:
                     return cache_data
 
-            # 借鉴对方3轮全局重试，多域名轮询
             for attempt in range(3):
                 tried = 0
                 while tried < len(self.hosts):
@@ -220,7 +245,6 @@ t5lYKfpe8k83ZA==
                         return res
                     self.host_index = (self.host_index + 1) % len(self.hosts)
                     tried += 1
-                # 全部域名失效，重新认证重试
                 if attempt < 2:
                     print("域名全部失效，重新认证")
                     try:
@@ -233,7 +257,6 @@ t5lYKfpe8k83ZA==
             print("get_data异常：", e)
             return None
 
-    # 加解密工具 完全沿用你的原版
     def aes_encrypt(self, text, key, iv):
         try:
             cipher = AES.new(key.encode(), AES.MODE_CBC, iv.encode())
@@ -270,7 +293,6 @@ t5lYKfpe8k83ZA==
     def get_md5(self, text):
         return hashlib.md5(text.encode()).hexdigest().upper()
 
-    # 页面接口 一字不动保留你的代码
     def homeContent(self, filter):
         classes = [
             {"type_name": "电影", "type_id": "1"},
@@ -419,7 +441,6 @@ t5lYKfpe8k83ZA==
             print("播放解析失败：", e)
             return {"parse": 0, "playUrl": "", "url": ""}
 
-    # 修复闪退关键点：固定返回False，摒弃pass
     def manualVideoCheck(self):
         return False
 
