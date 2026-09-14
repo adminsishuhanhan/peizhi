@@ -7,11 +7,12 @@ var rule = {
     quickSearch: 1,
     filterable: 0,
     headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Referer': 'https://www.dj.net/'
     },
     timeout: 8000,
 
-    // 分类列表（已确认的 ID，可自行补充）
+    // ========== 分类列表 ==========
     一级: async function () {
         return [
             { type_id: '13', type_name: '慢摇串烧' },
@@ -33,21 +34,27 @@ var rule = {
         ];
     },
 
-    // 分类内容
+    // ========== 分类内容 ==========
     二级: async function (tid, pg, filter, ext) {
         let url = rule.host + '/dj-class-' + tid + '-' + pg + '.html';
-        let html = await request(url);
+        let html = await request(url, {
+            headers: rule.headers,
+            encoding: 'gbk'
+        });
         return parseList(html);
     },
 
-    // 搜索
+    // ========== 搜索 ==========
     搜索: async function (wd, pg) {
         let url = rule.host + '/search.php?mod=music&srchtxt=' + encodeURIComponent(wd) + '&searchsubmit=yes';
-        let html = await request(url);
+        let html = await request(url, {
+            headers: rule.headers,
+            encoding: 'gbk'
+        });
         return parseList(html);
     },
 
-    // 详情
+    // ========== 详情 ==========
     详情: async function (id) {
         return {
             vod_id: id,
@@ -59,10 +66,13 @@ var rule = {
         };
     },
 
-    // 播放（核心）
+    // ========== 播放（核心）==========
     播放: async function (flag, id, flags) {
         let apiUrl = rule.host + '/template/zhzh_dzmusic/ajax/?action=geturl';
-        let res = await post(apiUrl, { id: id });
+        let res = await post(apiUrl, { id: id }, {
+            headers: rule.headers,
+            encoding: 'gbk'
+        });
         let json = JSON.parse(res);
         if (json.error !== '0' || !json.data || json.data.length === 0) {
             return '获取失败';
@@ -72,7 +82,7 @@ var rule = {
     }
 };
 
-// 通用列表解析
+// ========== 通用列表解析 ==========
 function parseList(html) {
     let items = [];
     let reg = /<a href="https:\/\/www\.dj\.net\/djplay\/music(\d+)\.html"[^>]*title="([^"]+)"/g;
